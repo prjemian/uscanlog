@@ -163,15 +163,18 @@ def make_stop_event(scan):
         }
 
     """
-    event = dict(event_type="stop", uid=random_uuid(), run_start=scan["uuid"])
-    event["time"] = time_float(scan.get("ended", scan["started"]))
-    event["exit_status"] = dict(
-        complete="success", 
-        unknown=scan["state"],          # TODO: get correct text
-        scanning=scan["state"],         # TODO: get correct text
-        )[scan["state"]]
-    
-    print(json.dumps(event, indent=2))
+    if scan["state"] == "unknown":
+        event = None        # do not report a 'stop' document
+    else:
+        event = dict(event_type="stop", uid=random_uuid(), run_start=scan["uuid"])
+        event["time"] = time_float(scan.get("ended", scan["started"]))
+        event["exit_status"] = dict(
+            complete="success", 
+            scanning="aborted",
+            # "failed" is another possible result, not used here
+            )[scan["state"]]
+        
+        print(json.dumps(event, indent=2))
     return event
 
 
