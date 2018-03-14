@@ -152,7 +152,8 @@ def make_start_event(scan):
         scan_macro = scan["type"],
         title = scan["title"],
         )
-    
+    event["xml_id"] = scan["xml_id"]
+
     # print(json.dumps(event, indent=2))
     return event
 
@@ -202,6 +203,7 @@ def make_stop_event(scan):
             )[scan["state"]]
         # everything else in start document is optional
         event["time_text"] = t
+        event["scanlog_state"] = scan["state"]
         # event["num_events"] = 0     # no event documents known at this time
         
         # print(json.dumps(event, indent=2))
