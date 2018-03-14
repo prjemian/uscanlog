@@ -243,7 +243,7 @@ def write_to_databroker(stream):
 
 def main():
     scans = OrderedDict()
-    for fname in os.listdir("."):
+    for fname in sorted(os.listdir(".")):
         if fname.endswith(".xml"):
             print("file: " + fname)
             read_xml_file(fname, scans)
