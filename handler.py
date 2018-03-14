@@ -33,157 +33,14 @@ def random_uuid():
 
 def time_float(datestring):
     dt = dateutil.parser.parse(datestring)
-    return float(dt.timestamp())
-
-
-def make_start_event(scan):
-    """
-    return a `start` event dictionary from the scan information dictionary
-    
-    typical scan information dictionary::
-    
-        {
-          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
-          "title": "GlassyCarbonM4_20100eV", 
-          "started": null, 
-          "number": "15", 
-          "ended": null, 
-          "state": "complete", 
-          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "xml_filename": "2017-04-04-scanlog.xml", 
-          "type": "FlyScan"
-        }
-    
-    typical Databroker start document, in mongodb.metadatastore "run_start" collection::
-
-        {
-            "OPHYD_VERSION": "1.0.0",
-            "plan_type": "generator",
-            "pid": 19927,
-            "detectors": [
-                "det1"
-            ],
-            "plan_pattern_args": {
-                "stop": 0.29932260461360183,
-                "num": 101,
-                "start": -0.29932260461360183
-            },
-            "motors": [
-                "motor4"
-            ],
-            "tune_num": 101,
-            "num_intervals": 100,
-            "tune": true,
-            "tune_start": -0.29932260461360183,
-            "uid": "ef7a616e-ca7f-423d-ae31-3beff4201ca2",
-            "tune_name": "usaxs_motor_tune",
-            "tune_axis": "motor4",
-            "tune_finish": 0.29932260461360183,
-            "tune_pretune_position": 0.42,
-            "plan_pattern_module": "numpy",
-            "login_id": "prjemian@ookhd",
-            "tune_time_s": 1,
-            "hints": {
-                "dimensions": [
-                    [
-                        [
-                            "motor4"
-                        ],
-                        "primary"
-                    ]
-                ]
-            },
-            "beamline_id": "developer",
-            "num_points": 101,
-            "plan_pattern": "linspace",
-            "plan_name": "rel_scan",
-            "BLUESKY_VERSION": "1.1.0",
-            "plan_args": {
-                "motor": "TunableSynAxis_v1(prefix='', name='motor4', read_attrs=['readback', 'setpoint'], configuration_attrs=[])",
-                "stop": 0.29932260461360183,
-                "num": 101,
-                "start": -0.29932260461360183,
-                "detectors": [
-                    "SynGauss(name='det1', value=3.37341840745714e-09, timestamp=1519492987.8068526)"
-                ],
-                "per_step": "None"
-            },
-            "_id": "5a91a04d7a30a54dd7a40053",
-            "time": 1519493197.3155074,
-            "scan_id": 874,
-            "tune_datetime": "2018-02-24 11:26:37.305737",
-            "tune_det": "det1"
-        }
-
-    """
-    event = dict(event_type="start", uid=scan["uuid"])
-    event["time"] = time_float(scan["started"])
-    event["SPEC"] = dict(
-        filename = scan["file"],
-        scan_number = scan["number"],
-        title = scan["title"],
-        )
-    event["scan_id"] = scan["number"]
-    event["plan_name"] = scan["type"]
-    
-    print(json.dumps(event, indent=2))
-    return event
-
-
-def make_stop_event(scan):
-    """
-    return a `start` event dictionary from the scan information dictionary
-    
-    typical scan information dictionary::
-    
-        {
-          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
-          "title": "GlassyCarbonM4_20100eV", 
-          "started": null, 
-          "number": "15", 
-          "ended": null, 
-          "state": "complete", 
-          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "xml_filename": "2017-04-04-scanlog.xml", 
-          "type": "FlyScan"
-        }
-    
-    typical Databroker stop document, in mongodb.metadatastore "run_stop" collection::
-
-        {
-            "uid": "e56a8588-2d41-4bbc-97bd-3754675ceae2",
-            "run_start": "ef7a616e-ca7f-423d-ae31-3beff4201ca2",
-            "_id": "5a91a04e7a30a54dd7a400ba",
-            "time": 1519493198.5081244,
-            "exit_status": "success",
-            "num_events": {
-                "primary": 101
-            }
-        }
-
-    """
-    if scan["state"] == "unknown":
-        event = None        # do not report a 'stop' document
-    else:
-        event = dict(event_type="stop", uid=random_uuid(), run_start=scan["uuid"])
-        event["time"] = time_float(scan.get("ended", scan["started"]))
-        event["exit_status"] = dict(
-            complete="success", 
-            scanning="aborted",
-            # "failed" is another possible result, not used here
-            )[scan["state"]]
-        
-        print(json.dumps(event, indent=2))
-    return event
+    return dt.timestamp()
 
 
 def read_xml_file(xml_filename, db):
     """
     read the XML scanLog file, log scans into db
     
-    ::
+    Typical start of scanLog XML file::
 
         <?xml version="1.0" ?>
         <?xml-stylesheet type="text/xsl" href="scanlog.xsl" ?>
@@ -212,8 +69,8 @@ def read_xml_file(xml_filename, db):
             raise ValueError(msg)
         scan = dict(
             xml_filename = xml_filename, 
-            xml_id = id,
-            uuid = scan_id(),
+            xml_id = scan_id,
+            uuid = random_uuid(),
             )
         for key in "number state type".split():
             scan[key] = node.get(key)
@@ -232,20 +89,171 @@ def read_xml_file(xml_filename, db):
         db[scan_id] = scan      # replaces if already known
 
 
-def make_events(scan, scans):
-    db = dict(start=[], stop=[])
-    handlers = dict(start=make_start_event, stop=make_stop_event)
-    for key in "start stop".split():
-        event = handlers[key](scan)
+def make_start_event(scan):
+    """
+    return a `start` event dictionary from the scan information dictionary
+    
+    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
+    
+    typical scan information dictionary::
+    
+        {
+          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
+          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
+          "title": "GlassyCarbonM4_20100eV", 
+          "started": "2016-10-05 22:08:08", 
+          "number": "15", 
+          "ended": "2016-10-05 22:09:59", 
+          "state": "complete", 
+          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
+          "xml_filename": "2017-04-04-scanlog.xml", 
+          "type": "FlyScan"
+        }
+    
+    typical Databroker start document, in mongodb.metadatastore "run_start" collection::
+
+        {'beamline_id': 'developer',
+         'detectors': ['scaler'],
+         'hints': {'dimensions': [[['m1'], 'primary']]},
+         'login_id': 'jemian@otz.aps.anl.gov',
+         'md': {'demo': 'MONA motor scan', 'purpose': 'development'},
+         'motors': ['m1'],
+         'num_intervals': 10,
+         'num_points': 11,
+         'pid': 18543,
+         'plan_args': {
+             'detectors': ["EpicsScaler(prefix='gov:scaler1', name='scaler', read_attrs=['channels', 'time'], configuration_attrs=['preset_time', 'presets', 'gates', 'names', 'freq', 'auto_count_time', 'count_mode', 'delay', 'auto_count_delay', 'egu'])"],
+          'motor': "EpicsMotor(prefix='gov:m1', name='m1', settle_time=0.0, timeout=None, read_attrs=['user_readback', 'user_setpoint'], configuration_attrs=['motor_egu', 'velocity', 'acceleration', 'user_offset', 'user_offset_dir'])",
+          'num': 11,
+          'per_step': 'None',
+          'start': -2,
+          'stop': 0},
+         'plan_name': 'scan',
+         'plan_pattern': 'linspace',
+         'plan_pattern_args': {'num': 11, 'start': -2, 'stop': 0},
+         'plan_pattern_module': 'numpy',
+         'plan_type': 'generator',
+         'proposal_id': None,
+         'scan_id': 86,
+         'time': 1513898975.0762107,
+         'uid': '27a1daf5-d4a1-49b5-9415-64b6064d2064'}
+
+    """
+    event = OrderedDict()
+    event["time"] = time_float(scan["started"])
+    event["plan_name"] = scan["type"]
+    event["uid"] = scan["uuid"]
+    event["scan_id"] = scan["number"]
+    # everything else in start document is optional
+    event["time_text"] = scan["started"]
+    event["SPEC"] = dict(
+        filename = scan["file"],
+        scan_number = scan["number"],
+        scan_macro = scan["type"],
+        title = scan["title"],
+        )
+    
+    # print(json.dumps(event, indent=2))
+    return event
+
+
+def make_stop_event(scan):
+    """
+    return a `start` event dictionary from the scan information dictionary
+    
+    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
+    
+    typical scan information dictionary::
+    
+        {
+          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
+          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
+          "title": "GlassyCarbonM4_20100eV", 
+          "started": "2016-10-05 22:08:08", 
+          "number": "15", 
+          "ended": "2016-10-05 22:09:59", 
+          "state": "complete", 
+          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
+          "xml_filename": "2017-04-04-scanlog.xml", 
+          "type": "FlyScan"
+        }
+    
+    typical Databroker stop document, in mongodb.metadatastore "run_stop" collection::
+
+        {'exit_status': 'success',
+         'num_events': {'primary': 11},
+         'run_start': '27a1daf5-d4a1-49b5-9415-64b6064d2064',
+         'time': 1513898982.243269,
+         'uid': 'cbc6008f-a784-4ee4-825e-cdddf33db31d'}
+
+    """
+    if scan["state"] == "unknown":
+        event = None        # do not report a 'stop' document
+    else:
+        event = OrderedDict()
+        t = scan.get("ended", scan["started"])
+        event["time"] = time_float(t)
+        event["uid"] = random_uuid()
+        event["run_start"] = scan["uuid"]
+        event["exit_status"] = dict(
+            complete="success", 
+            scanning="aborted",
+            # "failed" is another possible result, not used here
+            )[scan["state"]]
+        # everything else in start document is optional
+        event["time_text"] = t
+        # event["num_events"] = 0     # no event documents known at this time
+        
+        # print(json.dumps(event, indent=2))
+    return event
+
+
+def parse_scan_data(scan):
+    """
+    try to read the SPEC data file to get the scan's data
+    
+    store that data back to the scan dictionary
+    """
+    if os.path.exists(scan["file"]):
+        pass       # TODO:
+
+def make_document_stream(scans):
+    """convert the scan data to document stream compatible with databroker"""
+    document_stream = []
+
+    for scan in scans.values():
+        event = make_start_event(scan)
+        document_stream.append(("start", event))
+        
+        data_streams = parse_scan_data(scan)
+        if data_streams is not None:
+            pass        # TODO:
+        
+        event = make_stop_event(scan)
         if event is not None:
-            db[key] = event
+            document_stream.append(("stop", event))
+    
+    return document_stream
+
+
+def write_to_databroker(stream):
+    with open("stream.json", "w") as fp:          # TODO: use databroker, this is interim
+        json.dump(stream, fp, indent=2)
 
 
 def main():
     scans = OrderedDict()
     for fname in os.listdir("."):
         if fname.endswith(".xml"):
+            print("file: " + fname)
             read_xml_file(fname, scans)
+    print("{} scans".format(len(scans)))
+
+    docs = make_document_stream(scans)
+    print("{} events".format(len(docs)))
+
+    write_to_databroker(docs)
+    print("done")
 
 
 if __name__ == "__main__":
