@@ -7,6 +7,7 @@ requires python 3.6 (for the timestamp())
 """
 
 
+import datetime
 import dateutil.parser
 import json
 import logging
@@ -34,9 +35,23 @@ def random_uuid():
     return s
 
 
+def time_text(time_float):
+    return str(datetime.datetime.utcfromtimestamp(time_float))
+
+
 def time_float(datestring):
+    """return float(time) since UNIX epoch"""
     dt = dateutil.parser.parse(datestring)
     return dt.timestamp()
+
+
+def cleanup_name(k):
+    """
+    cleanup "k" (no periods, white space, ...)
+    """
+    for c in (",", ".", " "):
+        k = k.replace(c, "_")
+    return k
 
 
 def read_xml_file(xml_filename, db):
@@ -142,25 +157,25 @@ def make_start_document(scan):
          'uid': '27a1daf5-d4a1-49b5-9415-64b6064d2064'}
 
     """
-    event = OrderedDict()
-    event["time"] = time_float(scan["started"])
-    event["plan_name"] = scan["type"]
-    event["uid"] = scan["uuid"]
-    event["scan_id"] = scan["number"]
+    doc = OrderedDict()
+    doc["time"] = time_float(scan["started"])
+    doc["plan_name"] = scan["type"]
+    doc["uid"] = scan["uuid"]
+    doc["scan_id"] = scan["number"]
     # everything else in start document is optional
-    event["time_text"] = scan["started"]
-    event["SPEC"] = OrderedDict(
+    doc["time_text"] = scan["started"]
+    doc["SPEC"] = OrderedDict(
         filename = scan["file"],
         scan_number = scan["number"],
         scan_macro = scan["type"],
         title = scan["title"],
         )
-    event["scanlog_id"] = scan["xml_id"]
+    doc["scanlog_id"] = scan["xml_id"]
 
-    add_event_metadata(scan, event, "start")
+    add_event_metadata(scan, doc, "start")
 
-    # print(json.dumps(event, indent=2))
-    return event
+    # print(json.dumps(doc, indent=2))
+    return doc
 
 
 def make_stop_document(scan):
@@ -209,28 +224,69 @@ def make_stop_document(scan):
         # everything else in start document is optional
         doc["time_text"] = t
         doc["scanlog_state"] = scan["state"]
-        # doc["num_events"] = 0     # no event documents known at this time
+        # doc["num_events"] = 0     # supplied by data parsing
 
         # print(json.dumps(doc, indent=2))
     return doc
 
 
-def make_descriptor_document(scan):
+def process_SPEC_scan_data(scan):
     """
-    return a `descriptor` document from the scan information dictionary
-
-    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
+    return stream of descriptor and event documents
     """
-    pass
+    sdf = openSpecDataFile(scan["file"])
+    if sdf is None:
+        return
+    spec_scan = sdf.getScan(scan["number"])
+    spec_scan.interpret()
 
+    document_stream = []
 
-def make_event_document(scan):
-    """
-    return a `event` document from the scan information dictionary
+    doc = OrderedDict()     # descriptor doc
+    t_base = doc["time"] = time_float(spec_scan.date)
+    descriptor_uuid = doc["uid"] = random_uuid()
+    doc["run_start"] = scan["uuid"]
+    dk = doc["data_keys"] = {}
+    for k in spec_scan.data.keys():
+        k_clean = cleanup_name(k)
+        dk[k_clean] = dict(
+            dtype = 'number',
+            source = 'SPEC data file',
+            shape = [],
+            # units = "unknown",
+            # precision = 3,
+            SPEC_name = k
+            )
+    # doc["object_keys"] = {}        # TODO: required?
+    # doc["configuration"] = {}      # TODO: required?
+    # doc["hints"] = {}              # TODO: required?
+    # everything else in document is optional
+    doc["time_text"] = time_text(t_base)
+    document_stream.append(("descriptor", doc))
 
-    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
-    """
-    pass
+    num_observations = len(spec_scan.data[spec_scan.column_first])
+    # TODO: which of these two?
+    # scan[STREAM_KEYWORD]["stop.num_events"] = {'primary': num_observations}
+    scan[STREAM_KEYWORD]["stop.num_events"] = num_observations
+    for i in range(num_observations):
+        doc = OrderedDict()     # event doc
+        t = spec_scan.data.get("Epoch", 0)[i] + t_base
+        t_text = time_text(t)
+        doc["time"] = t
+        doc["uid"] = random_uuid()
+        doc["seq_num"] = i+1
+        doc["descriptor"] = descriptor_uuid
+        doc["data"] = {}
+        doc["timestamps"] = {}
+        for k, v in spec_scan.data.items():
+            k_clean = cleanup_name(k)
+            doc["data"][k_clean] = v[i]
+            doc["timestamps"][k_clean] = t_text
+        # everything else in document is optional
+        doc["time_text"] = t_text
+        document_stream.append(("event", doc))
+
+    return document_stream
 
 
 def add_event_metadata(scan, event, doc_type):
@@ -249,38 +305,48 @@ def add_event_metadata(scan, event, doc_type):
                 base[parts[-1]] = value                 # 'other'
 
 
-def parse_scan_data(scan):
-    """
-    try to read the SPEC data file to get the scan's data
-
-    store that data back to the scan dictionary
-    """
+def openSpecDataFile(filename):
     global specdatafile_obj
-
-    if not os.path.exists(scan["file"]):
-        return
-
     if specdatafile_obj is not None:
         if hasattr(specdatafile_obj, "fileName"):
-            if specdatafile_obj.fileName != scan["file"]:
+            if specdatafile_obj.fileName != filename:
                 specdatafile_obj = None
         else:
             specdatafile_obj = None
 
     if specdatafile_obj is None:
         try:
-            specdatafile_obj = spec.SpecDataFile(scan["file"])
+            specdatafile_obj = spec.SpecDataFile(filename)
         except spec.NotASpecDataFile as _exc:
             return
 
-    spec_scan = specdatafile_obj.getScan(scan["number"])
+    return specdatafile_obj
+
+
+def parse_scan_data(scan):
+    """
+    try to read the SPEC data file to get the scan's data
+
+    store that data back to the scan dictionary
+    """
+    if not os.path.exists(scan["file"]):
+        return
+
+    sdf = openSpecDataFile(scan["file"])
+    if sdf is None:
+        return
+
+    spec_scan = sdf.getScan(scan["number"])
     spec_scan.interpret()
 
     stream = []
-    # TODO: now, make the descriptor and event documents
 
     scanmeta = scan[STREAM_KEYWORD] = OrderedDict()
     scanmeta["start.SPEC.command"] = spec_scan.scanCmd
+    for k, v in spec_scan.metadata.items():
+        k_clean = cleanup_name(k)
+        scanmeta["start.metadata." + k_clean + ".value"] = v
+        scanmeta["start.metadata." + k_clean + ".name"] = k
 
     # special commands that record data outside of SPEC:
     macro_name = spec_scan.scanCmd.split()[0]
@@ -297,7 +363,7 @@ def parse_scan_data(scan):
                 scanmeta["start.SPEC.hdf5_file"] = comm[p:-1]
                 break
     else:
-        pass
+        stream += process_SPEC_scan_data(scan)
 
     return stream
 
@@ -308,19 +374,16 @@ def make_document_stream(scans):
 
     for scan in scans.values():
         data_stream = parse_scan_data(scan)
-        if data_stream is not None:
-            pass        # TODO:
 
-        event = make_start_document(scan)
-        document_stream.append(("start", event))
+        doc = make_start_document(scan)
+        document_stream.append(("start", doc))
 
-        # TODO: document_stream - insert descriptor and event docs here
-        # add_event_metadata(scan, descriptor_doc, "descriptor")
-        # add_event_metadata(scan, event_doc, "event")
+        if data_stream is not None and len(data_stream) > 0:
+            document_stream += data_stream
 
-        event = make_stop_document(scan)
-        if event is not None:
-            document_stream.append(("stop", event))
+        doc = make_stop_document(scan)
+        if doc is not None:
+            document_stream.append(("stop", doc))
 
     return document_stream
 
@@ -339,7 +402,7 @@ def main():
     print("{} scans".format(len(scans)))
 
     docs = make_document_stream(scans)
-    print("{} events".format(len(docs)))
+    print("{} docs".format(len(docs)))
 
     write_to_databroker(docs)
     print("done")
