@@ -1,4 +1,4 @@
-# scanlog_translate
+# uscanlog
 
 Convert the USAXS scan log files from XML to mongodb via JSON.
 
