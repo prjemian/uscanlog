@@ -14,6 +14,7 @@ import lxml.etree
 import os
 import sys
 import uuid
+import databroker
 
 
 HOME = os.environ.get("HOME", "~")
@@ -116,7 +117,6 @@ def make_start_event(scan):
 
     """
     event = dict(event_type="start", uid=scan["uuid"])
-    # TODO: What is "_id"?
     event["time"] = time_float(scan["started"])
     event["SPEC"] = dict(
         filename = scan["file"],
