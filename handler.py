@@ -16,11 +16,12 @@ import sys
 import uuid
 # import databroker
 from collections import OrderedDict
-import spec2nexus
+import spec2nexus.spec as spec
 
 
 HOME = os.environ.get("HOME", "~")
 MONGODB_YML = os.path.join(HOME, ".config/databroker/mongodb_config.yml")
+STREAM_KEYWORD = "_stream_"
 
 
 def random_uuid():
@@ -40,7 +41,7 @@ def time_float(datestring):
 def read_xml_file(xml_filename, db):
     """
     read the XML scanLog file, log scans into db
-    
+
     Typical start of scanLog XML file::
 
         <?xml version="1.0" ?>
@@ -69,7 +70,7 @@ def read_xml_file(xml_filename, db):
             msg = "file {}, node {} has no @id attribute".format(xml_filename, _i_)
             raise ValueError(msg)
         scan = dict(
-            xml_filename = xml_filename, 
+            xml_filename = xml_filename,
             xml_id = scan_id,
             uuid = random_uuid(),
             )
@@ -93,24 +94,24 @@ def read_xml_file(xml_filename, db):
 def make_start_event(scan):
     """
     return a `start` event dictionary from the scan information dictionary
-    
+
     :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
-    
+
     typical scan information dictionary::
-    
+
         {
-          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
-          "title": "GlassyCarbonM4_20100eV", 
-          "started": "2016-10-05 22:08:08", 
-          "number": "15", 
-          "ended": "2016-10-05 22:09:59", 
-          "state": "complete", 
-          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "xml_filename": "2017-04-04-scanlog.xml", 
+          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat",
+          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c",
+          "title": "GlassyCarbonM4_20100eV",
+          "started": "2016-10-05 22:08:08",
+          "number": "15",
+          "ended": "2016-10-05 22:09:59",
+          "state": "complete",
+          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat",
+          "xml_filename": "2017-04-04-scanlog.xml",
           "type": "FlyScan"
         }
-    
+
     typical Databroker start document, in mongodb.metadatastore "run_start" collection::
 
         {'beamline_id': 'developer',
@@ -147,7 +148,7 @@ def make_start_event(scan):
     event["scan_id"] = scan["number"]
     # everything else in start document is optional
     event["time_text"] = scan["started"]
-    event["SPEC"] = dict(
+    event["SPEC"] = OrderedDict(
         filename = scan["file"],
         scan_number = scan["number"],
         scan_macro = scan["type"],
@@ -155,31 +156,49 @@ def make_start_event(scan):
         )
     event["scanlog_id"] = scan["xml_id"]
 
+    add_event_metadata(scan, event, "start")
+
     # print(json.dumps(event, indent=2))
     return event
+
+
+def add_event_metadata(scan, event, doc_type):
+    if scan.get(STREAM_KEYWORD) is not None:
+        for key, value in scan[STREAM_KEYWORD].items(): # key:  "start.this.that.the.other"
+            if key.startswith(doc_type+"."):            # "start"
+                base = event
+                parts = key.split(".")[1:]              # ['this', 'that', 'the', 'other']
+
+                # build up the dictionary stack as needed
+                for item in parts[:-1]:                 # ['this', 'that', 'the']
+                    if item not in base:
+                        base[item] = OrderedDict()
+                    base = base[item]
+
+                base[parts[-1]] = value                 # 'other'
 
 
 def make_stop_event(scan):
     """
     return a `start` event dictionary from the scan information dictionary
-    
+
     :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
-    
+
     typical scan information dictionary::
-    
+
         {
-          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c", 
-          "title": "GlassyCarbonM4_20100eV", 
-          "started": "2016-10-05 22:08:08", 
-          "number": "15", 
-          "ended": "2016-10-05 22:09:59", 
-          "state": "complete", 
-          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat", 
-          "xml_filename": "2017-04-04-scanlog.xml", 
+          "xml_id": "15:/share1/USAXS_data/2016-10/10_05_Setup.dat",
+          "uuid": "927e10f9fe27474785e9c41d0ffb6a4c",
+          "title": "GlassyCarbonM4_20100eV",
+          "started": "2016-10-05 22:08:08",
+          "number": "15",
+          "ended": "2016-10-05 22:09:59",
+          "state": "complete",
+          "file": "/share1/USAXS_data/2016-10/10_05_Setup.dat",
+          "xml_filename": "2017-04-04-scanlog.xml",
           "type": "FlyScan"
         }
-    
+
     typical Databroker stop document, in mongodb.metadatastore "run_stop" collection::
 
         {'exit_status': 'success',
@@ -198,7 +217,7 @@ def make_stop_event(scan):
         event["uid"] = random_uuid()
         event["run_start"] = scan["uuid"]
         event["exit_status"] = dict(
-            complete="success", 
+            complete="success",
             scanning="aborted",
             # "failed" is another possible result, not used here
             )[scan["state"]]
@@ -206,34 +225,64 @@ def make_stop_event(scan):
         event["time_text"] = t
         event["scanlog_state"] = scan["state"]
         # event["num_events"] = 0     # no event documents known at this time
-        
+
         # print(json.dumps(event, indent=2))
     return event
 
 
-specfile = None
+specdatafile_obj = None
 
 def parse_scan_data(scan):
     """
     try to read the SPEC data file to get the scan's data
-    
+
     store that data back to the scan dictionary
     """
+    global specdatafile_obj
+
     if not os.path.exists(scan["file"]):
         return
-    
-    if specfile is not None:
-        if specfile.get("fileName") != scan["file"]:
-            specfile = None
-    
-    if specfile is None:
-        specfile = spec2nexus.SpecDataFile(scan["file"])
-    
-    spec_scan = specfile.getScan(scan["number"])
-    
+
+    if specdatafile_obj is not None:
+        if hasattr(specdatafile_obj, "fileName"):
+            if specdatafile_obj.fileName != scan["file"]:
+                specdatafile_obj = None
+        else:
+            specdatafile_obj = None
+
+    if specdatafile_obj is None:
+        try:
+            specdatafile_obj = spec.SpecDataFile(scan["file"])
+        except spec.NotASpecDataFile as _exc:
+            return
+
+    spec_scan = specdatafile_obj.getScan(scan["number"])
+    spec_scan.interpret()
+
     stream = []
     # TODO: now, make the descriptor and event documents
-    scan["databroker_stream"] = stream
+
+    scanmeta = scan[STREAM_KEYWORD] = OrderedDict()
+    scanmeta["start.SPEC.command"] = spec_scan.scanCmd
+
+    # special commands that record data outside of SPEC:
+    macro_name = spec_scan.scanCmd.split()[0]
+    if macro_name in ('SAXS', 'WAXS'):
+        # SAXS  ./01_30_Setup_saxs/AgBeLAB6_0001.hdf    20    20    1    5     1
+        scanmeta["start.SPEC.hdf5_file"] = spec_scan.scanCmd.split()[1]
+    elif macro_name in ('FlyScan'):
+        # FlyScan  ar 8.76068 0 7.1442 2.5e-05
+        match_text = "FlyScan file name = "
+        for comm in spec_scan.comments: # pull it from the comments
+            p = comm.find(match_text)
+            if p >= 0:
+                p += len(match_text)
+                scanmeta["start.SPEC.hdf5_file"] = comm[p:-1]
+                break
+    else:
+        pass
+
+    return stream
 
 
 def make_document_stream(scans):
@@ -241,17 +290,19 @@ def make_document_stream(scans):
     document_stream = []
 
     for scan in scans.values():
+        data_stream = parse_scan_data(scan)
+        if data_stream is not None:
+            pass        # TODO:
+
         event = make_start_event(scan)
         document_stream.append(("start", event))
-        
-        data_streams = parse_scan_data(scan)
-        if data_streams is not None:
-            pass        # TODO:
-        
+
+        # TODO: document_stream - insert descriptor and event docs here
+
         event = make_stop_event(scan)
         if event is not None:
             document_stream.append(("stop", event))
-    
+
     return document_stream
 
 
