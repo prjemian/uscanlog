@@ -2,6 +2,8 @@
 
 """
 Convert the USAXS scan log files from XML to mongodb via JSON.
+
+requires python 3.6 (for the timestamp())
 """
 
 
@@ -20,12 +22,16 @@ MONGODB_YML = os.path.join(HOME, ".config/databroker/mongodb_config.yml")
 
 def random_uuid():
     """return a random UUID"""
-    return uuid.uuid4().get_hex()
+    try:
+        s = uuid.uuid4().get_hex()
+    except AttributeError:
+        s = uuid.uuid4().hex
+    return s
 
 
 def time_float(datestring):
     dt = dateutil.parser.parse(datestring)
-    return float(dt.toordinal())    # TODO: switch to UNIX EPOCH time
+    return float(dt.timestamp())
 
 
 def make_start_event(scan):
