@@ -152,7 +152,7 @@ def make_start_event(scan):
         scan_macro = scan["type"],
         title = scan["title"],
         )
-    event["xml_id"] = scan["xml_id"]
+    event["scanlog_id"] = scan["xml_id"]
 
     # print(json.dumps(event, indent=2))
     return event
