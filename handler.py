@@ -14,7 +14,8 @@ import lxml.etree
 import os
 import sys
 import uuid
-import databroker
+# import databroker
+from collections import OrderedDict
 
 
 HOME = os.environ.get("HOME", "~")
@@ -180,7 +181,7 @@ def make_stop_event(scan):
 
 def read_xml_file(xml_filename, db):
     """
-    read the XML scanLog file, log events into db by start or stop
+    read the XML scanLog file, log scans into db
     
     ::
 
@@ -203,14 +204,16 @@ def read_xml_file(xml_filename, db):
     """
     # print(xml_filename)
     tree = lxml.etree.parse(xml_filename)
-    nodes = tree.getroot().xpath('scan')
-    # print(xml_filename, len(nodes), "scan nodes")
 
-    for node in tree.getroot().xpath('scan'):
+    for _i_, node in enumerate(tree.getroot().xpath('scan')):
+        scan_id = node.get("id")
+        if scan_id is None:
+            msg = "file {}, node {} has no @id attribute".format(xml_filename, _i_)
+            raise ValueError(msg)
         scan = dict(
             xml_filename = xml_filename, 
-            xml_id = node.get("id"),
-            uuid = random_uuid(),
+            xml_id = id,
+            uuid = scan_id(),
             )
         for key in "number state type".split():
             scan[key] = node.get(key)
@@ -222,18 +225,27 @@ def read_xml_file(xml_filename, db):
             else:
                 scan[subnode.tag] = subnode.text
         # print(json.dumps(scan, indent=2))
+        # if scan_id in db:
+        #     print("known", json.dumps(db[scan_id], indent=2))
+        #     print("new", json.dumps(scan, indent=2))
+        #     print(scan_id + " already known ... updating with new information")
+        db[scan_id] = scan      # replaces if already known
 
-        db["start"].append(make_start_event(scan))
-        db["stop"].append(make_stop_event(scan))
+
+def make_events(scan, scans):
+    db = dict(start=[], stop=[])
+    handlers = dict(start=make_start_event, stop=make_stop_event)
+    for key in "start stop".split():
+        event = handlers[key](scan)
+        if event is not None:
+            db[key] = event
 
 
 def main():
-    db = dict(start=[], stop=[])
+    scans = OrderedDict()
     for fname in os.listdir("."):
         if fname.endswith(".xml"):
-            read_xml_file(fname, db)
-    
-    # TODO: remove redundancies in db
+            read_xml_file(fname, scans)
 
 
 if __name__ == "__main__":
