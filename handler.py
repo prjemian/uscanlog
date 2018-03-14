@@ -22,6 +22,7 @@ import spec2nexus.spec as spec
 HOME = os.environ.get("HOME", "~")
 MONGODB_YML = os.path.join(HOME, ".config/databroker/mongodb_config.yml")
 STREAM_KEYWORD = "_stream_"
+specdatafile_obj = None
 
 
 def random_uuid():
@@ -91,9 +92,9 @@ def read_xml_file(xml_filename, db):
         db[scan_id] = scan      # replaces if already known
 
 
-def make_start_event(scan):
+def make_start_document(scan):
     """
-    return a `start` event dictionary from the scan information dictionary
+    return a `start` document from the scan information dictionary
 
     :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
 
@@ -162,25 +163,9 @@ def make_start_event(scan):
     return event
 
 
-def add_event_metadata(scan, event, doc_type):
-    if scan.get(STREAM_KEYWORD) is not None:
-        for key, value in scan[STREAM_KEYWORD].items(): # key:  "start.this.that.the.other"
-            if key.startswith(doc_type+"."):            # "start"
-                base = event
-                parts = key.split(".")[1:]              # ['this', 'that', 'the', 'other']
-
-                # build up the dictionary stack as needed
-                for item in parts[:-1]:                 # ['this', 'that', 'the']
-                    if item not in base:
-                        base[item] = OrderedDict()
-                    base = base[item]
-
-                base[parts[-1]] = value                 # 'other'
-
-
-def make_stop_event(scan):
+def make_stop_document(scan):
     """
-    return a `start` event dictionary from the scan information dictionary
+    return a `stop` document from the scan information dictionary
 
     :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
 
@@ -209,28 +194,60 @@ def make_stop_event(scan):
 
     """
     if scan["state"] == "unknown":
-        event = None        # do not report a 'stop' document
+        doc = None        # do not report a 'stop' document
     else:
-        event = OrderedDict()
+        doc = OrderedDict()
         t = scan.get("ended", scan["started"])
-        event["time"] = time_float(t)
-        event["uid"] = random_uuid()
-        event["run_start"] = scan["uuid"]
-        event["exit_status"] = dict(
+        doc["time"] = time_float(t)
+        doc["uid"] = random_uuid()
+        doc["run_start"] = scan["uuid"]
+        doc["exit_status"] = dict(
             complete="success",
             scanning="aborted",
             # "failed" is another possible result, not used here
             )[scan["state"]]
         # everything else in start document is optional
-        event["time_text"] = t
-        event["scanlog_state"] = scan["state"]
-        # event["num_events"] = 0     # no event documents known at this time
+        doc["time_text"] = t
+        doc["scanlog_state"] = scan["state"]
+        # doc["num_events"] = 0     # no event documents known at this time
 
-        # print(json.dumps(event, indent=2))
-    return event
+        # print(json.dumps(doc, indent=2))
+    return doc
 
 
-specdatafile_obj = None
+def make_descriptor_document(scan):
+    """
+    return a `descriptor` document from the scan information dictionary
+
+    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
+    """
+    pass
+
+
+def make_event_document(scan):
+    """
+    return a `event` document from the scan information dictionary
+
+    :see: https://nsls-ii.github.io/bluesky/documents.html?highlight=start#overview-of-a-run
+    """
+    pass
+
+
+def add_event_metadata(scan, event, doc_type):
+    if scan.get(STREAM_KEYWORD) is not None:
+        for key, value in scan[STREAM_KEYWORD].items(): # key:  "start.this.that.the.other"
+            if key.startswith(doc_type+"."):            # "start"
+                base = event
+                parts = key.split(".")[1:]              # ['this', 'that', 'the', 'other']
+
+                # build up the dictionary stack as needed
+                for item in parts[:-1]:                 # ['this', 'that', 'the']
+                    if item not in base:
+                        base[item] = OrderedDict()
+                    base = base[item]
+
+                base[parts[-1]] = value                 # 'other'
+
 
 def parse_scan_data(scan):
     """
@@ -294,12 +311,14 @@ def make_document_stream(scans):
         if data_stream is not None:
             pass        # TODO:
 
-        event = make_start_event(scan)
+        event = make_start_document(scan)
         document_stream.append(("start", event))
 
         # TODO: document_stream - insert descriptor and event docs here
+        # add_event_metadata(scan, descriptor_doc, "descriptor")
+        # add_event_metadata(scan, event_doc, "event")
 
-        event = make_stop_event(scan)
+        event = make_stop_document(scan)
         if event is not None:
             document_stream.append(("stop", event))
 
