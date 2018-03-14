@@ -16,6 +16,7 @@ import sys
 import uuid
 # import databroker
 from collections import OrderedDict
+import spec2nexus
 
 
 HOME = os.environ.get("HOME", "~")
@@ -210,14 +211,30 @@ def make_stop_event(scan):
     return event
 
 
+specfile = None
+
 def parse_scan_data(scan):
     """
     try to read the SPEC data file to get the scan's data
     
     store that data back to the scan dictionary
     """
-    if os.path.exists(scan["file"]):
-        pass       # TODO:
+    if not os.path.exists(scan["file"]):
+        return
+    
+    if specfile is not None:
+        if specfile.get("fileName") != scan["file"]:
+            specfile = None
+    
+    if specfile is None:
+        specfile = spec2nexus.SpecDataFile(scan["file"])
+    
+    spec_scan = specfile.getScan(scan["number"])
+    
+    stream = []
+    # TODO: now, make the descriptor and event documents
+    scan["databroker_stream"] = stream
+
 
 def make_document_stream(scans):
     """convert the scan data to document stream compatible with databroker"""
