@@ -49,7 +49,7 @@ def cleanup_name(k):
     """
     cleanup "k" (no periods, white space, ...)
     """
-    for c in (",", ".", " "):
+    for c in (",", ".", " ", "-"):
         k = k.replace(c, "_")
     return k
 
@@ -230,6 +230,31 @@ def make_stop_document(scan):
     return doc
 
 
+def determine_data_source(k, spec_scan):
+    if k in spec_scan.positioner:
+        data_source = 'SPEC positioner'
+    elif k in spec_scan.header.positioner_xref.values():
+        data_source = 'SPEC positioner name'
+    elif k in spec_scan.header.positioner_xref:
+        data_source = 'SPEC positioner mnemonic'
+    # elif k in spec_scan.header.O[0]:    # TODO: flatten O[][] to O[]
+    #     data_source = 'SPEC positioner (O)'
+    # elif k in spec_scan.header.o[0]:
+    #     data_source = 'SPEC positioner (o)'
+    # elif k in spec_scan.header.J[0]:
+    #     data_source = 'SPEC counter (J)'
+    # elif k in spec_scan.header.j[0]:
+    #     data_source = 'SPEC counter (j)'
+    elif k in spec_scan.header.counter_xref.values():
+        data_source = 'SPEC counter name'
+    elif k in spec_scan.header.counter_xref:
+        data_source = 'SPEC counter mnemonic'
+    else:
+        data_source = 'SPEC value'
+        
+    return data_source
+
+
 def process_SPEC_scan_data(scan):
     """
     return stream of descriptor and event documents
@@ -251,7 +276,7 @@ def process_SPEC_scan_data(scan):
         k_clean = cleanup_name(k)
         dk[k_clean] = dict(
             dtype = 'number',
-            source = 'SPEC data file',
+            source = determine_data_source(k, spec_scan),
             shape = [],
             # units = "unknown",
             # precision = 3,
@@ -343,10 +368,28 @@ def parse_scan_data(scan):
 
     scanmeta = scan[STREAM_KEYWORD] = OrderedDict()
     scanmeta["start.SPEC.command"] = spec_scan.scanCmd
-    for k, v in spec_scan.metadata.items():
+    # scanmeta["start.plan_args"] = spec_scan.scanCmd
+    if hasattr(spec_scan, "T") and len(spec_scan.T) > 0:
+        scanmeta["start.counter_basis"] = dict(
+            description = "fixed time",
+            value = float(spec_scan.T),
+            units = "s",
+            )
+    elif hasattr(spec_scan, "M") and len(spec_scan.M) > 0:
+        scanmeta["start.counter_basis"] = dict(
+            description = "fixed monitor count",
+            value = float(spec_scan.M),
+            units = "counts",
+            # TODO: identify the monitor
+            )
+    for k, v in sorted(spec_scan.metadata.items()):
         k_clean = cleanup_name(k)
         scanmeta["start.metadata." + k_clean + ".value"] = v
         scanmeta["start.metadata." + k_clean + ".name"] = k
+    for k, v in sorted(spec_scan.positioner.items()):
+        k_clean = cleanup_name(k)
+        scanmeta["start.positioner." + k_clean + ".value"] = v
+        scanmeta["start.positioner." + k_clean + ".name"] = k
 
     # special commands that record data outside of SPEC:
     macro_name = spec_scan.scanCmd.split()[0]
