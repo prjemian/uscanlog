@@ -103,3 +103,4 @@ ENV/
 
 # temporary output file
 stream.json
+log.txt
