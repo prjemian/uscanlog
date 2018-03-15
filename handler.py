@@ -281,7 +281,7 @@ def process_SPEC_scan_data(scan):
         for k, v in spec_scan.data.items():
             k_clean = cleanup_name(k)
             doc["data"][k_clean] = v[i]
-            doc["timestamps"][k_clean] = t_text
+            doc["timestamps"][k_clean] = t
         # everything else in document is optional
         doc["time_text"] = t_text
         document_stream.append(("event", doc))
