@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<?xml-stylesheet type="text/xsl" href="scanlog.xsl" ?>
+<USAXS_SCAN_LOG version="1.0">
+	<scan id="4:./02_03_setup.dat" number="4" state="complete" type="ascan">
+		<title>Standards</title>
+		<file>./02_03_setup.dat</file>
+		<started date="2016-02-03" time="16:52:44"/>
+		<ended date="2016-02-03" time="16:52:53"/>
+	</scan>
+</USAXS_SCAN_LOG>
