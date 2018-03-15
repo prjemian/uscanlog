@@ -24,6 +24,13 @@ HOME = os.environ.get("HOME", "~")
 MONGODB_YML = os.path.join(HOME, ".config/databroker/mongodb_config.yml")
 STREAM_KEYWORD = "_stream_"
 specdatafile_obj = None
+JSON_FILE = "stream.json"
+MIN_REPORT_INTERVAL_S = 5.0
+MIN_REPORT_INTERVAL_I = 1000
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger('uscanlog_handler')
+logger.info("starting...")
 
 
 def random_uuid():
@@ -42,6 +49,11 @@ def time_text(time_float):
 def time_float(datestring):
     """return float(time) since UNIX epoch"""
     dt = dateutil.parser.parse(datestring)
+    return dt.timestamp()
+
+
+def time_now():
+    dt = datetime.datetime.now()
     return dt.timestamp()
 
 
@@ -77,8 +89,8 @@ def read_xml_file(xml_filename, db):
             </scan>
 
     """
-    # print(xml_filename)
     tree = lxml.etree.parse(xml_filename)
+    logger.info("reading from scanlog XML file: " + xml_filename)
 
     for _i_, node in enumerate(tree.getroot().xpath('scan')):
         scan_id = node.get("id")
@@ -99,11 +111,9 @@ def read_xml_file(xml_filename, db):
                 scan[subnode.tag] = "{} {}".format(d, t)
             else:
                 scan[subnode.tag] = subnode.text
-        # print(json.dumps(scan, indent=2))
-        # if scan_id in db:
-        #     print("known", json.dumps(db[scan_id], indent=2))
-        #     print("new", json.dumps(scan, indent=2))
-        #     print(scan_id + " already known ... updating with new information")
+        # logger.warning(json.dumps(scan, indent=2))
+        if scan_id in db:
+            logger.info(scan_id + " already known ... updating with new information")
         db[scan_id] = scan      # replaces if already known
 
 
@@ -174,7 +184,7 @@ def make_start_document(scan):
 
     add_event_metadata(scan, doc, "start")
 
-    # print(json.dumps(doc, indent=2))
+    # logger.warning(json.dumps(doc, indent=2))
     return doc
 
 
@@ -225,8 +235,10 @@ def make_stop_document(scan):
         doc["time_text"] = t
         doc["scanlog_state"] = scan["state"]
         # doc["num_events"] = 0     # supplied by data parsing
+        
+        add_event_metadata(scan, doc, "stop")
 
-        # print(json.dumps(doc, indent=2))
+        # logger.warning(json.dumps(doc, indent=2))
     return doc
 
 
@@ -251,7 +263,7 @@ def determine_data_source(k, spec_scan):
         data_source = 'SPEC counter mnemonic'
     else:
         data_source = 'SPEC value'
-        
+
     return data_source
 
 
@@ -289,7 +301,10 @@ def process_SPEC_scan_data(scan):
     doc["time_text"] = time_text(t_base)
     document_stream.append(("descriptor", doc))
 
-    num_observations = len(spec_scan.data[spec_scan.column_first])
+    dataset = spec_scan.data.get(spec_scan.column_first)
+    if dataset is None:
+        return          # no scan data!
+    num_observations = len(dataset)
     # TODO: which of these two?
     # scan[STREAM_KEYWORD]["stop.num_events"] = {'primary': num_observations}
     scan[STREAM_KEYWORD]["stop.num_events"] = num_observations
@@ -393,7 +408,7 @@ def parse_scan_data(scan):
 
     # special commands that record data outside of SPEC:
     macro_name = spec_scan.scanCmd.split()[0]
-    if macro_name in ('SAXS', 'WAXS'):
+    if macro_name in ('SAXS', 'WAXS', 'pinSAXS',):
         # SAXS  ./01_30_Setup_saxs/AgBeLAB6_0001.hdf    20    20    1    5     1
         scanmeta["start.SPEC.hdf5_file"] = spec_scan.scanCmd.split()[1]
     elif macro_name in ('FlyScan'):
@@ -406,7 +421,9 @@ def parse_scan_data(scan):
                 scanmeta["start.SPEC.hdf5_file"] = comm[p:-1]
                 break
     else:
-        stream += process_SPEC_scan_data(scan)
+        data_stream = process_SPEC_scan_data(scan)
+        if data_stream is not None:
+            stream += data_stream
 
     return stream
 
@@ -414,25 +431,42 @@ def parse_scan_data(scan):
 def make_document_stream(scans):
     """convert the scan data to document stream compatible with databroker"""
     document_stream = []
+    
+    t_report = time_now() - 5
+    i_report = -1
 
-    for scan in scans.values():
-        data_stream = parse_scan_data(scan)
+    with open(JSON_FILE, "w") as fp:
+        logger.info("writing JSON to file: " + JSON_FILE)
 
-        doc = make_start_document(scan)
-        document_stream.append(("start", doc))
+        for _i, scan in enumerate(scans.values()):
+            if time_now() >= t_report or _i >= i_report:
+                logger.debug("{}: scan {} in make_document_stream()".format(
+                    str(datetime.datetime.now()), _i+1))
+                t_report = time_now() + MIN_REPORT_INTERVAL_S
+                i_report = _i + MIN_REPORT_INTERVAL_I
+            
+            data_stream = parse_scan_data(scan)
 
-        if data_stream is not None and len(data_stream) > 0:
-            document_stream += data_stream
+            doc = make_start_document(scan)
+            document_stream.append(("start", doc))
 
-        doc = make_stop_document(scan)
-        if doc is not None:
-            document_stream.append(("stop", doc))
+            if data_stream is not None and len(data_stream) > 0:
+                document_stream += data_stream
+
+            doc = make_stop_document(scan)
+            if doc is not None:
+                document_stream.append(("stop", doc))
+
+            s = [json.dumps(doc, indent=2) for doc in document_stream]
+            fp.write(",\n".join(s))
+            document_stream = []
 
     return document_stream
 
 
 def write_to_databroker(stream):
-    with open("stream.json", "w") as fp:          # TODO: use databroker, this is interim
+    pass
+    with open(JSON_FILE, "w") as fp:          # TODO: use databroker, this is interim
         json.dump(stream, fp, indent=2)
 
 
@@ -440,15 +474,14 @@ def main():
     scans = OrderedDict()
     for fname in sorted(os.listdir(".")):
         if fname.endswith(".xml"):
-            print("file: " + fname)
             read_xml_file(fname, scans)
-    print("{} scans".format(len(scans)))
+    logger.info("{} scans".format(len(scans)))
 
     docs = make_document_stream(scans)
-    print("{} docs".format(len(docs)))
+    #logger.info("{} docs".format(len(docs)))
 
-    write_to_databroker(docs)
-    print("done")
+    #write_to_databroker(docs)
+    #logger.info("done")
 
 
 if __name__ == "__main__":
